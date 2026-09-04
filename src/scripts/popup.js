@@ -76,6 +76,19 @@ $("#login").on("click", async function () {
     renderFeeds();
 });
 
+//Resolves the tab to reuse when "open feeds in same tab" is enabled:
+//the remembered feed tab if it is still known, otherwise the current active tab.
+async function resolveSameTabTargetId() {
+    const resp = await bg.send("getFeedTabId");
+    const storedTabId = resp?.feedTabId;
+    if (storedTabId) {
+        return storedTabId;
+    }
+
+    const activeTabs = await browser.tabs.query({ active: true, currentWindow: true });
+    return activeTabs?.[0]?.id;
+}
+
 //using "mousedown" instead of "click" event to process middle button click.
 $("#feed, #feed-saved").on("mousedown", "a", async function (event) {
     var link = $(this);
@@ -85,12 +98,7 @@ $("#feed, #feed-saved").on("mousedown", "a", async function (event) {
         var url = link.data("link");
 
         if (isFeed && options.openFeedsInSameTab && isActiveTab) {
-            const resp = await bg.send("getFeedTabId");
-            let targetTabId = resp && resp.feedTabId;
-            if (!targetTabId) {
-                const activeTabs = await browser.tabs.query({ active: true, currentWindow: true });
-                targetTabId = activeTabs && activeTabs[0] && activeTabs[0].id;
-            }
+            const targetTabId = await resolveSameTabTargetId();
             if (targetTabId) {
                 try {
                     const tab = await browser.tabs.update(targetTabId, { url: url, active: true });
