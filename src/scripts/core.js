@@ -197,12 +197,27 @@ browser.webRequest.onCompleted.addListener(async function (details) {
     }
 }, {urls: ["*://*.feedly.com/v3/tags*global.saved*"]});
 
-browser.action.onClicked.addListener(async function () {
-    await ensureOptionsLoaded();
-    if (appGlobal.options.enableSidePanel) {
-        await toggleSidePanel();
+browser.action.onClicked.addListener(function (tab) {
+    //The side panel may only be opened from within the user gesture, which any
+    //preceding await destroys, so try it before the options are read from storage.
+    if (appGlobal.options.enableSidePanel && openSidePanel(tab)) {
         return;
     }
+
+    handleActionClick(tab).catch(function (e) {
+        console.error("Unable to handle the action click", e);
+    });
+});
+
+async function handleActionClick(tab) {
+    await ensureOptionsLoaded();
+
+    //The options were not loaded yet when the click arrived. The gesture is gone by
+    //now, so this only succeeds on browsers that do not enforce it.
+    if (appGlobal.options.enableSidePanel && openSidePanel(tab)) {
+        return;
+    }
+
     if (appGlobal.isLoggedIn) {
         await openFeedlyTab();
         if(appGlobal.options.resetCounterOnClick){
@@ -211,13 +226,15 @@ browser.action.onClicked.addListener(async function () {
     } else {
         await getAccessToken();
     }
-});
+}
 
 /* Initialization all parameters and run feeds check */
 async function initialize(immediate) {
-    if (appGlobal.options.enableSidePanel) {
-        await browser.action.setPopup({popup: ""});
-    } else if (appGlobal.options.openSiteOnIconClick) {
+    //Only drop the popup once the side panel is known to replace it, otherwise the
+    //icon would do nothing at all on browsers without the side panel API.
+    const isSidePanelActive = await configureSidePanel();
+
+    if (isSidePanelActive || appGlobal.options.openSiteOnIconClick) {
         await browser.action.setPopup({popup: ""});
     } else {
         await browser.action.setPopup({popup: "popup.html"});
@@ -226,52 +243,58 @@ async function initialize(immediate) {
 
     const platformInfo = await browser.runtime.getPlatformInfo();
     appGlobal.environment.os = platformInfo.os;
-    await configureSidePanel();
     startSchedule(appGlobal.options.updateInterval, immediate);
 }
 
+/* Returns true when the side panel is enabled and the browser accepted the configuration */
 async function configureSidePanel() {
     if (!browser.sidePanel || typeof browser.sidePanel.setOptions !== "function") {
-        return;
+        return false;
     }
+
+    const isEnabled = Boolean(appGlobal.options.enableSidePanel);
+    let isConfigured = false;
+
     try {
         await browser.sidePanel.setOptions({
-            enabled: Boolean(appGlobal.options.enableSidePanel),
+            enabled: isEnabled,
             path: "popup.html?panel=1"
         });
-        if (typeof browser.sidePanel.setPanelBehavior === "function") {
-            await browser.sidePanel.setPanelBehavior({
-                openPanelOnActionClick: Boolean(appGlobal.options.enableSidePanel)
-            });
-        }
+        isConfigured = true;
     } catch (e) {
         console.info("Unable to configure side panel", e);
     }
+
+    //Set separately, a failure above must not leave the icon without any behaviour
+    if (typeof browser.sidePanel.setPanelBehavior === "function") {
+        try {
+            await browser.sidePanel.setPanelBehavior({openPanelOnActionClick: isEnabled});
+            isConfigured = true;
+        } catch (e) {
+            console.info("Unable to set side panel behaviour", e);
+        }
+    }
+
+    return isEnabled && isConfigured;
 }
 
-async function toggleSidePanel() {
-    if (browser.sidebarAction && typeof browser.sidebarAction.isOpen === "function") {
-        const isOpen = await browser.sidebarAction.isOpen({});
-        if (isOpen && typeof browser.sidebarAction.close === "function") {
-            await browser.sidebarAction.close();
-            return true;
-        }
-        if (typeof browser.sidebarAction.open === "function") {
-            await browser.sidebarAction.open();
-            return true;
-        }
+/* Opens the side panel for the clicked tab. Deliberately not async, awaiting the call
+   would move it out of the user gesture that the browser requires. */
+function openSidePanel(tab) {
+    if (!browser.sidePanel || typeof browser.sidePanel.open !== "function") {
+        return false;
     }
-    if (browser.sidePanel && typeof browser.sidePanel.open === "function") {
-        const tabs = await browser.tabs.query({ active: true, currentWindow: true });
-        if (tabs.length && tabs[0].id != null) {
-            await browser.sidePanel.open({ tabId: tabs[0].id });
-            return true;
-        }
-        const windowInfo = await browser.windows.getCurrent();
-        await browser.sidePanel.open({ windowId: windowInfo.id });
-        return true;
+
+    if (!tab || (tab.id == null && tab.windowId == null)) {
+        return false;
     }
-    return false;
+
+    const target = tab.id == null ? {windowId: tab.windowId} : {tabId: tab.id};
+    Promise.resolve(browser.sidePanel.open(target)).catch(function (e) {
+        console.info("Unable to open side panel", e);
+    });
+
+    return true;
 }
 
 async function ensureOptionsLoaded() {

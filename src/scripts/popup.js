@@ -55,7 +55,11 @@ document.addEventListener("DOMContentLoaded", async function () {
     }
 
     // @if BROWSER='chrome'
-    window.addEventListener("resize", onResizeChrome);
+    //The side panel is resizable and keeps the percentage based layout applied above,
+    //onResizeChrome would freeze it at the height of the first resize.
+    if (!isSidePanel) {
+        window.addEventListener("resize", onResizeChrome);
+    }
     // @endif
 
     // @if BROWSER='firefox'
@@ -76,13 +80,20 @@ $("#login").on("click", async function () {
     renderFeeds();
 });
 
-//Resolves the tab to reuse when "open feeds in same tab" is enabled:
-//the remembered feed tab if it is still known, otherwise the current active tab.
+//Resolves the tab to reuse when "open feeds in same tab" is enabled: the remembered
+//feed tab if it is still known, otherwise the active tab, but only in the sidebar and
+//the side panel. There the feeds live next to the tab strip rather than inside it, so
+//reusing the active tab is expected. In the popup it would navigate the page the user
+//opened the popup from.
 async function resolveSameTabTargetId() {
     const resp = await bg.send("getFeedTabId");
     const storedTabId = resp?.feedTabId;
     if (storedTabId) {
         return storedTabId;
+    }
+
+    if (!popupGlobal.isSidebar) {
+        return undefined;
     }
 
     const activeTabs = await browser.tabs.query({ active: true, currentWindow: true });
@@ -93,15 +104,18 @@ async function resolveSameTabTargetId() {
 $("#feed, #feed-saved").on("mousedown", "a", async function (event) {
     var link = $(this);
     if (event.which === 1 || event.which === 2) {
-        var isActiveTab = !(event.ctrlKey || event.which === 2) && !options.openFeedsInBackground;
+        var isNewTabRequested = event.ctrlKey || event.which === 2;
+        var isActiveTab = !isNewTabRequested && !options.openFeedsInBackground;
         var isFeed = link.hasClass("title") && $("#feed").is(":visible");
         var url = link.data("link");
 
-        if (isFeed && options.openFeedsInSameTab && isActiveTab) {
+        //Only an explicitly requested new tab overrides "open feeds in same tab",
+        //opening in the background still reuses the feed tab.
+        if (isFeed && options.openFeedsInSameTab && !isNewTabRequested) {
             const targetTabId = await resolveSameTabTargetId();
             if (targetTabId) {
                 try {
-                    const tab = await browser.tabs.update(targetTabId, { url: url, active: true });
+                    const tab = await browser.tabs.update(targetTabId, { url: url, active: isActiveTab });
                     onOpenCallback(isFeed, tab);
                     return;
                 } catch {
