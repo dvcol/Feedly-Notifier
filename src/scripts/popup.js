@@ -168,11 +168,9 @@ $("#popup-content").on("click", ".show-content", function () {
         for (let feed of feeds) {
             if (feed.id === feedId) {
 
-                // @if BROWSER='firefox'
-                // We should sanitize the content of feeds because of AMO review.
+                // Sanitize feed HTML before rendering it in the popup.
                 feed.title = DOMPurify.sanitize(feed.title);
                 feed.content = DOMPurify.sanitize(feed.content);
-                // @endif
 
                 contentContainer.html(Mustache.render(template, feed));
 
