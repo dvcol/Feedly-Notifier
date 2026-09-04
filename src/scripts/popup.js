@@ -104,7 +104,7 @@ async function resolveSameTabTargetId() {
 $("#feed, #feed-saved").on("mousedown", "a", async function (event) {
     var link = $(this);
     if (event.which === 1 || event.which === 2) {
-        var isNewTabRequested = event.ctrlKey || event.which === 2;
+        var isNewTabRequested = event.ctrlKey || event.metaKey || event.which === 2;
         var isActiveTab = !isNewTabRequested && !options.openFeedsInBackground;
         var isFeed = link.hasClass("title") && $("#feed").is(":visible");
         var url = link.data("link");
